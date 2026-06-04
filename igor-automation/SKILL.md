@@ -122,6 +122,8 @@ MATLAB or Python multidimensional data:
 HDF5 load pattern:
 
 ```igorpro
+DFREF oldDF = GetDataFolderDFR()
+SetDataFolder root:
 Variable fileID
 HDF5OpenFile/R/Z fileID as "D:\\data\\run001\\s21_map.h5"
 if (V_Flag == 0)
@@ -130,7 +132,10 @@ if (V_Flag == 0)
 	HDF5LoadData/O fileID, "/field_mT"
 	HDF5CloseFile fileID
 endif
+SetDataFolder oldDF
 ```
+
+If the target analysis lives outside `root:`, create/open the HDF5 `fileID` from `root:`, run `HDF5LoadData` from `root:`, and then `Duplicate/O` loaded waves into the target data folder. `HDF5OpenFile` stores the file ID variable in the current data folder; loading with that `fileID` after switching folders can fail or resolve the wrong variable.
 
 Python/MATLAB handoff rules:
 
@@ -144,15 +149,22 @@ Igor does not directly read MATLAB `.fig` files as editable Igor graphs. Use MAT
 
 Validated local workflow for MATLAB `.fig` reconstruction:
 
-- Open `.fig` with MATLAB `openfig(..., "invisible")`, export a MATLAB reference PNG, and traverse figure children.
-- Extract axes metadata: limits, font, box/grid state, labels, `CLim`, and colormap.
+- Open `.fig` with MATLAB `openfig(..., "invisible")`, export a MATLAB reference PNG, and do a full figure audit before writing Igor code.
+- Traverse with `findall(fig)` and `findall(ax)`, then filter by each object's `Parent`. Do not rely only on `axes.Children`; some visible curves and helper objects are not enumerated there reliably.
+- Extract axes metadata: `XLim`, `YLim`, `ZLim`, `CLim`, `View`, `XScale`, `YScale`, `ZScale`, `ColorScale`, font, box/grid state, labels, tick positions, tick labels, colormap, legend, colorbar, and constant/reference lines.
+- For MATLAB `yyaxis`, extract `ax.YAxis(1)` and `ax.YAxis(2)` independently: limits, label, color, ticks, tick labels, and scale. Record whether each plotted object belongs to the left or right y axis.
 - Extract object data:
   - `line`: `XData`, `YData`, style, color, marker.
   - `scatter`: `XData`, `YData`, `CData`, `SizeData`, marker, display name.
   - `surface` or image-like objects: `XData`, `YData`, `ZData`, `CData`, `CLim`, `FaceColor`, `EdgeColor`.
 - Write data to HDF5 or CSV plus JSON metadata. HDF5 is preferred for matrix/image data and custom colormaps.
+- Keep raw extracted object data under a stable hierarchy such as `root:raw:<fig>:<panel>:axes:<obj>`. Put Igor display or derived waves under `root:analysis:<fig>:<panel>`.
 - Account for MATLAB-to-Igor HDF5 2D dimension reversal. In the verified path, writing a MATLAB `rows x cols` matrix loaded into Igor as `N=(cols,rows)`. Write custom colormaps transposed so Igor receives a `256 x 3` RGB color-table wave.
+- Convert MATLAB custom colormaps in two steps: MATLAB stores RGB as `0..1`, while Igor custom color-table waves need `0..65535`; after fixing the HDF5 2D orientation to `256 x 3`, multiply the RGB wave by `65535`.
+- Before reconstructing a MATLAB surface or image as an Igor image, check whether `diff(XData)` and `diff(YData)` are constant within tolerance. `AppendImage` plus `SetScale/I` is correct only for effectively uniform axes.
+- If `XData` or `YData` is nonuniform, preserve raw `XData`, `YData`, and `CData`, then generate a separate resampled render wave on the coordinate system that MATLAB actually displayed. For example, if raw `YData` is nonlinear but `20*log10(YData)` is an even dB sweep, resample in that displayed dB coordinate instead of treating raw `YData` as a linear Igor axis.
 - For MATLAB `surface` with `FaceColor="interp"`, create a high-resolution bilinear render wave for visual fidelity, while also preserving the raw `CData` wave.
+- Treat `surface + view(90,90)` as a projection problem. Compare `View` with actual `XData`, `YData`, `ZData`, and `CData` shapes to decide whether Igor display axes must be swapped or reversed; do not blindly transpose.
 - Convert MATLAB TeX labels and legend display names before sending them to Igor annotations:
   - If the MATLAB string contains TeX commands, `_`, `^`, or braces, prefer Igor TeX instead of legacy Symbol-font annotation escapes.
   - Wrap the converted expression as `\\$WMTEX$ <tex> \\$/WMTEX$` inside the Igor command string. The doubled backslashes are required when the annotation text is embedded in an Igor command.
@@ -173,6 +185,16 @@ Result:      Greek mu, subscript 0/1, and visible spaces survive in an Igor lege
 - Export previews with `SavePICT/O/E=-5/RES=300/WIN=<graph>`. Use `SavePICT /W=(left,top,right,bottom)` when the output pixel dimensions must match the MATLAB reference PNG; `/W` is in points, so at 300 dpi use `points = pixels * 72 / 300`.
 - Save a `.pxp` containing the imported waves and live Igor graph windows. Report residual visual differences honestly, especially Igor TeX italic/roman choices, legend box metrics, and renderer-specific antialiasing.
 - For public repositories or shared examples, do not include private `.fig`, exported preview images, `.pxp` files, or extracted data. Use synthetic waves or public datasets for examples.
+
+Checklist for `.fig` bridge work:
+
+1. Export a MATLAB reference PNG before extraction.
+2. Use `findall` to extract axes, object, ruler, legend, colorbar, and annotation metadata.
+3. Check whether surface or image coordinates are uniform before choosing `AppendImage` plus `SetScale/I`.
+4. Check `View`, dual y axes, constant lines, legends, and colorbars before writing Igor reconstruction code.
+5. Store raw extracted data in `root:raw:<fig>:<panel>:axes:<obj>`.
+6. Store render or derived waves in `root:analysis:<fig>:<panel>`.
+7. After Igor reconstruction, export a PNG and compare it with the MATLAB reference by size and visual inspection.
 
 ## Standard Plot And Analysis Templates
 
@@ -221,6 +243,23 @@ ColorScale/C/N=s21Color/F=0/A=RC/E/W=S21Map image=s21_db_map,frame=0.00
 Label/W=S21Map bottom "Frequency (GHz)"
 Label/W=S21Map left "Field (mT)"
 ```
+
+Dual y axis trace:
+
+```igorpro
+Display/N=DualAxisGraph leftY vs xWave
+AppendToGraph/R/W=DualAxisGraph rightY vs xWave
+ModifyGraph/W=DualAxisGraph gFont="Arial",gfSize=8,gmSize=8,standoff=0,tick=2,btLen=3
+ModifyGraph/W=DualAxisGraph rgb(leftY)=(0,0,0),rgb(rightY)=(32768,0,0)
+SetAxis/W=DualAxisGraph left,leftLo,leftHi
+SetAxis/W=DualAxisGraph right,rightLo,rightHi
+Label/W=DualAxisGraph bottom "Frequency (GHz)"
+Label/W=DualAxisGraph left "Left signal (a.u.)"
+Label/W=DualAxisGraph right "Right signal (a.u.)"
+ModifyGraph/W=DualAxisGraph axRGB(right)=(32768,0,0),tlblRGB(right)=(32768,0,0),alblRGB(right)=(32768,0,0)
+```
+
+For dual-axis graphs, do not apply `ModifyGraph mirror=2` as a default style; it can fail or produce the wrong axis behavior. Set left and right axes explicitly.
 
 Error bars:
 
@@ -314,7 +353,9 @@ $app.Execute('SaveExperiment /P=codexOut as "codex_igor_smoke_test.pxp"')
 - Do not kill existing Igor processes unless the user approves or you are cleaning up processes you just created and verified as test-only.
 - `LoadWave/P=rawPath` uses an Igor symbolic path created by `NewPath`; passing a raw filesystem path to `/P` is wrong.
 - Check `V_Flag`, `S_waveNames`, and generated waves after every load or fit operation. Do not assume an operation succeeded because COM returned.
+- Run `HDF5LoadData` from `root:` when using a `fileID` opened there, then duplicate loaded waves into the target data folder.
 - If image/map orientation looks wrong, check dimension scaling and image orientation before transposing data. Use `SetScale`, `NewImage`, or explicit axis reversal deliberately.
+- For MATLAB `.fig` images and surfaces, uniform-axis assumptions are dangerous. Check coordinate spacing and `View` before using `SetScale/I` or transposing.
 - For repeated traces or images from the same wave, Igor uses instance names such as `wave#1`; inspect `TraceNameList`, `ImageNameList`, `TraceInfo`, and `ImageInfo`.
 - Color scales are attached to image instance names. If the color scale is blank or wrong, verify the image name with `ImageNameList`.
 - For missing-wave errors inside functions, add `Wave/Z` plus `WaveExists` checks before analysis.
