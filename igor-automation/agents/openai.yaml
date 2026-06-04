@@ -1,0 +1,4 @@
+interface:
+  display_name: "Igor Automation"
+  short_description: "Automate Igor Pro scientific analysis and figures"
+  default_prompt: "Use $igor-automation to connect to Igor Pro, import scientific data, and export a polished Igor figure."

@@ -1,0 +1,31 @@
+# Private lab data and generated exports.
+*.fig
+*.mat
+*.pxp
+*.h5
+*.hdf5
+*.ibw
+*.itx
+*.csv
+*.tsv
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.pdf
+
+outputs/
+output/
+data/
+raw/
+raw_data/
+private/
+fig_to_igor/
+
+# Local/editor noise.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
